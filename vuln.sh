@@ -1,15 +1,59 @@
 #!/bin/bash
 
+# set -x
+
+################################################################################
+#                                                                              #
+# vuln.sh									                                   #
+#                                                                              #
+# version: 1.0.0                                                               #
+#                                                                              #
+# VULNER - Cyber units operating in an automated way.                          #
+#									                                           #
+# Student Name - Michael Ivlev						                           #
+# Student Code - S11						                                   #
+# Class Code - HMagen773616                                                    #
+# Lectures Name - Eliran Berkovich					                           #
+#									                                           #
+# GNU GENERAL PUBLIC LICENSE                                                   #
+#                                                                              #
+# This program is free software: you can redistribute it and/or modify         #
+# it under the terms of the GNU General Public License as published by         #
+# the Free Software Foundation, either version 3 of the License, or            #
+# (at your option) any later version.                                          #
+#                                                                              #
+# This program is distributed in the hope that it will be useful,              #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of               #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                #
+# GNU General Public License for more details.                                 #
+#                                                                              #
+# You should have received a copy of the GNU General Public License            #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.        #
+#                                                                              #
+################################################################################
+
+# Import utils script
+declare -rg SCRIPT_DIR="$(dirname $(readlink -f "$0"))"
+source "$SCRIPT_DIR/utils.sh"
+
+declare -rg LOG_PATH="/var/log/vuln.log"
+declare -rg SCAN_PATH="$(pwd)/vuln_scans" #_$(date +%s)" 
+declare -rg USERNAME="${SUDO_USER:-$USER}"
+
+
+
+
 # Check if running as root
-check_root() {
+function check_root() {
     if [[ $EUID -ne 0 ]]; then
         echo "This script must be run as root."
         exit 1
     fi
+    return 0
 }
 
 # Function to display usage message
-usage() {
+function usage() {
     cat <<-EOM
 Usage: $0 [-u user_list] [-p pass_list] [-h]
 Options:
@@ -19,9 +63,43 @@ Options:
 EOM
 }
 
+# Function to parse command line arguments
+parse_arguments() {
+    while getopts "u:p:h" opt; do
+        case "$opt" in
+            u)
+                user_list="$OPTARG"
+                ;;
+            p)
+                pass_list="$OPTARG"
+                ;;
+            h)
+                usage
+                exit 0
+                ;;
+            *)
+                usage
+                exit 1
+                ;;
+        esac
+    done
+
+    shift $((OPTIND - 1))
+}
+
+# Function to check the init condition
+init_checks() {
+    check_root
+
+    [ ! -d "$SCAN_PATH" ] && mkdir "$SCAN_PATH"
+	[ ! -f "$LOG_PATH" ] && sudo touch "$LOG_PATH"
+
+    parse_arguments "$@"
+}
+
 # Function to check and install required apps
 check_and_install_apps() {
-    local apps=("nmap" "searchsploit" "hydra" "crunch" "masscan" "arp-scan")
+    local apps=( "arp-scan" "masscan" "nmap" "searchsploit" "hydra" "crunch") #medusa mfsconsole xsltproc
     for app in "${apps[@]}"; do
         if ! command -v "$app" &>/dev/null; then
             echo "$app is not installed. Installing..."
@@ -55,28 +133,6 @@ generate_password_list() {
     echo "Generating password list using crunch..."
     crunch "$min_length" "$max_length" "$charset" -o "$pass_list"
     echo "Password list created: $pass_list"
-}
-
-# Function to parse command line arguments
-parse_arguments() {
-    while getopts "u:p:h" opt; do
-        case "$opt" in
-            u)
-                user_list="$OPTARG"
-                ;;
-            p)
-                pass_list="$OPTARG"
-                ;;
-            h)
-                usage
-                exit 0
-                ;;
-            *)
-                usage
-                exit 1
-                ;;
-        esac
-    done
 }
 
 # Function to check if user_list is provided, if not, create one
@@ -118,34 +174,146 @@ check_pass_list() {
 
 # Function to identify LAN network range
 identify_network_range() {
+    local interface
     local default_gateway
-    default_gateway=$(ip route | grep default | awk '{print $3}')
-    local network_range
-    network_range=$(ipcalc -n -b "$default_gateway" | grep Network | awk '{print $2}')
-    echo "$network_range"
+    # local network_range
+
+    interface="$1"
+    # network_range=$(ipcalc -n -b "$default_gateway" | grep Network | awk '{print $2}')
+
+    case "$interface" in #TODO add 'per adapter interface'
+        "gateway")
+        default_gateway=$(ip route | awk '{if ($1 ~ /default/) print $5}')
+        network_range=$(ip route | awk -v pattern=$default_gateway '{if ($3 ~ pattern) print $3 ":" $1}')
+        ;;
+        "all")
+        network_range=$(ip route | awk '{if ($3 ~ /eth/ || $3 ~ /wlan/) print $3 ":" $1}')
+        ;;
+        eth*|wlan*)
+        network_range=$(ip route | awk -v pattern=$interface '{if ($3 ~ pattern) print $3 ":" $1}')
+        #TODO check if interface exists
+        ;;
+        *)
+        alert "$interface is an invalid argument"
+        exit 1 #FIXME
+        ;;
+    esac
+
+    # echo "$network_range"
 }
 
 # Function to perform a quick ARP scan and translate it to IP addresses
 arp_scan() {
-    local network_range="$1"
-    echo "Performing a quick ARP scan..."
-    arp-scan --localnet -I "$(ip route | grep default | awk '{print $5}')" | grep -oE '([0-9A-Fa-f]{2}:?){6}' > arp_scan.txt
-    awk '{print $1}' arp_scan.txt > ip_addresses.txt
+    local network_range
+    local adapters
+    local adapter_sockets=()
+
+    network_range=$(echo ${1} | sed 's/\n//g')
+    IFS=" " read -ra adapter_sockets <<< "$network_range"
+
+    title "Performing a quick ARP scan..."
+    
+    local adapter element arp_res 
+    for element in "${adapter_sockets[@]}"; do
+        adapter=$(echo "$element" | cut -d ':' -f 1)
+        note "Scanning $adapter"
+        arp_res=$(arp-scan --localnet -I "$adapter" 2>/dev/null | awk 'NR>2 {print $1}' | head -n -3) 
+        rhosts+="$arp_res\n"
+    done
+    rhosts=$(echo -e "$rhosts" | awk '$NF' | sort -u)
+    echo
+}
+
+# Function to perform enumeration of the target IP addresses
+enumerate_targets() {
+    local targets_file
+    targets_file="$1"
+
+    title "Enumerating live hosts..."
+
+    # for x in "$network_range"; do echo "$x"; echo; done
+
+    while IFS= read -r line; do
+        enum4linux "$line" > "${line}.enum"
+        echo
+    done < "$targets_file"
+    
+    echo
 }
 
 # Function to scan live hosts for open ports
 scan_live_hosts() {
     local network_range="$1"
-    echo "Scanning live hosts for open ports using Nmap..."
-    nmap -p- "$network_range" -oG nmap_live_hosts.txt
+
+    local st=$(date +%s)
+
+    if [ "$gw_adapter" == "$adapter" ]
+    then
+        title "Scanning for open ports using masscan..."
+
+        #TODO add a spoofed ip using --adapter-ip
+        masscan -Pn -n -iL "$rhosts_file" -p 0-65535 --rate 10000 --retries 1 -oG "grep.txt" # -oX "xml.txt"
+
+        cat grep.txt | awk '{sub(/open.*/, "", $7); print $4" "$7}' | sed 's|/||' | sort -Vu | head -n -3 \
+        | awk '{ip[$1] = ip[$1]","$2} END {for (i in ip) print i" "substr(ip[i], 2)}' > ${sockets_file}
+    else
+        title "Scanning for open ports using Nmap..."
+
+        nmap -Pn -n -iL "$rhosts_file" -p- -T4 -oG "grep.txt" &>/dev/null # -oX "xml.txt"
+        cat grep.txt | awk '/Ports/ {for (i = 5; i <= NF; i++) sub(/open.*/, "", $i); print}' \
+        | sed 's|/ |,|g' | sed -n 's/Host: \([^ ]*\) () Ports: \([^ ]*\),Ignored.*/\1 \2/p' > ${sockets_file}
+    fi
+
+
+    # echo "$network_range" > live_hosts.txt
+
+    
+    
+    
+    
+    local ed=$(date +%s)
+    tt=$((ed - st))
+    echo "$tt secs"
+
+
+    # nmap -n -Pn -T4 -p- -iL "$network_range" -oG nmap_live_hosts.txt
+
+	# echo -n "" > ip_port.txt
+	# while IFS= read -r line; do
+	# 	echo $line | grep -Eo '([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) .*Ports: ([0-9,]+)/' | awk -v ORS='' '{printf "%s:", $1}' >> ip_port.txt 
+	# 	echo $line | grep -Eo '([0-9,]+)/' | tr '\n' ',' | tr -d '/' | sed 's/,$/\n/' >> ip_port.txt
+
+	# done < nmap_live_hosts.txt
+
+    echo
 }
 
 # Function to perform service scans for open ports
 service_scan() {
-    local host="$1"
-    local port="$2"
-    echo "Performing a service scan on $host:$port using Nmap..."
-    nmap -sV -p "$port" "$host" -oG nmap_service_scan.txt
+    # local host="$1"
+    # local port="$2"
+    title "perform service scans for open ports using Nmap..."
+    
+
+	while IFS= read -r line; do
+		local ip=$(echo ${line} | cut -d ' ' -f 1) 
+		local ports=$(echo ${line} | cut -d ' ' -f 2)
+        note "scanning $ip"
+		nmap -n -Pn -T4 -sV -O --script "*vuln*" -p ${ports} ${ip} -oN nmap_service_scan_${ip}.txt -oX nmap_service_scan_${ip}.xml &>/dev/null
+        xsltproc nmap_service_scan_${ip}.xml > nmap_service_scan_${ip}.html
+	done < ${sockets_file}
+    echo
+
+	# for file in $(find ./ -name "nmap_service_scan_*.txt"); do
+	# 	cat ${file} >> nmap_service_scan.txt
+	# done
+
+    # for file in $(find ./ -name "nmap_service_scan_*.xml"); do
+	# 	cat ${file} >> nmap_service_scan.xml
+	# done
+    # xsltproc nmap_service_scan.xml > nmap_service_scan.html
+
+
 }
 
 # Function to brute force weak passwords
@@ -172,8 +340,8 @@ display_statistics() {
     end_time=$(date)
     local live_hosts
     live_hosts=$(wc -l < ip_addresses.txt)
-    local start_time
-    start_time=$(cat script_start_time.txt)
+    # local start_time
+    # start_time=$(cat script_start_time.txt)
     local total_time
     total_time=$((end_time - start_time))
     echo "Scan completed at: $end_time"
@@ -198,15 +366,43 @@ display_findings() {
 
 # Main function
 main() {
-    check_root
-    check_and_install_apps
-    parse_arguments "$@"
-    check_user_list
-    check_pass_list
-    network_range=$(identify_network_range)
-    date +%s > script_start_time.txt
+    declare -g network_range rhosts
+    declare -rg rhosts_file="${SCAN_PATH}/rhosts.txt"
+    declare -rg sockets_file="${SCAN_PATH}/open_sockets.txt"
+
+    init_checks "$@"
+
+    # check_user_list
+    # check_pass_list
+
+# start_time=$(date +%s)
+
+    declare -g adapter="eth1"
+    identify_network_range "$adapter" #FIXME not gateway doesnt masscan
+    declare -g gw_adapter=$(ip route | awk '/default/ {print $5}')
+    # echo "$network_range"
+
     arp_scan "$network_range"
-    scan_live_hosts "$(cat ip_addresses.txt)"
+    #TODO maybe add ping scan?
+    # echo -e "$rhosts"
+    echo -e "$rhosts" > "$rhosts_file"
+
+    # enumerate_targets "$rhosts_file" &
+    # local loading_msg_pid=$!
+    
+    scan_live_hosts "$rhosts"
+
+	service_scan
+
+    # searchsploit -u 
+    # nmap --script-updatedb    
+    # nmap --script "*vuln*
+
+
+    # wait $loading_msg_pid
+
+    title "done"
+	exit 0
 
     while IFS= read -r host; do
         open_ports=$(grep -A 1 "$host" nmap_live_hosts.txt | grep "Ports:" | sed 's/.*Ports://' | tr ',' '\n' | awk -F'/' '{print $1":"$4}' | tr -d ' ')
