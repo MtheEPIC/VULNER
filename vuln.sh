@@ -40,7 +40,9 @@ declare -rg LOG_PATH="/var/log/vuln.log"
 declare -rg SCAN_PATH="$(pwd)/vuln_scans" #_$(date +%s)" 
 declare -rg USERNAME="${SUDO_USER:-$USER}"
 
-
+declare -g adapter="eth1"
+declare -g user_list 
+declare -g pass_list
 
 
 # Check if running as root
@@ -55,26 +57,35 @@ function check_root() {
 # Function to display usage message
 function usage() {
     cat <<-EOM
-Usage: $0 [-u user_list] [-p pass_list] [-h]
+Usage: $0 [-u user_list] [-p pass_list] [-a {all, gateway, eth0, wlan0}] [-h] [-r ipv4]
 Options:
   -u  Specify a user list file.
   -p  Specify a password list file.
+  -a  Specify an adapter name/range
   -h  Display this help message.
+  -r  Run report mode on selected ip
 EOM
 }
 
 # Function to parse command line arguments
 parse_arguments() {
-    while getopts "u:p:h" opt; do
+    while getopts "u:p:a:r:h" opt; do
         case "$opt" in
             u)
-                user_list="$OPTARG"
+                parse_user_list "$OPTARG"
                 ;;
             p)
-                pass_list="$OPTARG"
+                parse_pass_list "$OPTARG"
+                ;;
+            a)
+                parse_adapter "$OPTARG"
                 ;;
             h)
                 usage
+                exit 0
+                ;;
+            r)
+                parse_report "$OPTARG"
                 exit 0
                 ;;
             *)
@@ -87,6 +98,49 @@ parse_arguments() {
     shift $((OPTIND - 1))
 }
 
+parse_adapter() {
+    local pattern
+    pattern="^(all|gateway)$|^(eth|wlan)[0-9]+$"
+    
+    [[ $1 =~ $pattern ]] && adapter="$1" || { usage; exit 1; }
+    
+    for valid_adapter in $(get_valid_adapters)
+    do
+        [ "$adapter" == "$valid_adapter" ] && return 0
+    done
+    alert "Invalid adapter ${adapter}"
+    usage
+
+    exit 1
+}
+
+parse_report() {
+    local pattern
+    pattern="^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+    
+    report="aaa"
+    [[ $1 =~ $pattern ]] && report="$1" || { usage; exit 1; }
+    # [ -f "${SCAN_PATH}/${report}" ] #TODO check if file exists
+}
+
+# Function to check if the given user list is valid, if not quit
+parse_user_list() {
+    local filename
+    filename="$1"
+
+    check_readable "$filename"
+    [ $? -eq 0 ] && user_list="$filename" || exit 1
+}
+
+# Function to check if the given user list is valid, if not quit
+parse_pass_list() {
+    local filename
+    filename="$1"
+
+    check_readable "$filename"
+    [ $? -eq 0 ] && pass_list="$filename" || exit 1
+}
+
 # Function to check the init condition
 init_checks() {
     check_root
@@ -95,6 +149,10 @@ init_checks() {
 	[ ! -f "$LOG_PATH" ] && sudo touch "$LOG_PATH"
 
     parse_arguments "$@"
+}
+
+get_valid_adapters() {
+    ip route | grep -o "dev [^ ]*" | cut -d ' ' -f 2 | sort -u
 }
 
 # Function to check and install required apps
@@ -135,9 +193,11 @@ generate_password_list() {
     echo "Password list created: $pass_list"
 }
 
+# DEPRECATED
 # Function to check if user_list is provided, if not, create one
 check_user_list() {
-    if [[ -z "$user_list" ]]; then
+    check_readable "$user_list"
+    if [ $? -eq 0 ]; then
         echo "User list not provided."
         user_list="user_list.txt"
         echo "Creating a default user list: $user_list"
@@ -154,9 +214,13 @@ check_user_list() {
             rm "$user_list"
             check_user_list
         fi
+
+        return 0
     fi
+    return 1
 }
 
+# DEPRECATED
 # Function to check if pass_list is provided, if not, create one
 check_pass_list() {
     if [[ -z "$pass_list" ]]; then
@@ -179,27 +243,23 @@ identify_network_range() {
     # local network_range
 
     interface="$1"
-    # network_range=$(ipcalc -n -b "$default_gateway" | grep Network | awk '{print $2}')
 
     case "$interface" in #TODO add 'per adapter interface'
         "gateway")
-        default_gateway=$(ip route | awk '{if ($1 ~ /default/) print $5}')
-        network_range=$(ip route | awk -v pattern=$default_gateway '{if ($3 ~ pattern) print $3 ":" $1}')
-        ;;
+            default_gateway=$(ip route | awk '{if ($1 ~ /default/) print $5}')
+            network_range=$(ip route | awk -v pattern=$default_gateway '{if ($3 ~ pattern) print $3 ":" $1}')
+            ;;
         "all")
-        network_range=$(ip route | awk '{if ($3 ~ /eth/ || $3 ~ /wlan/) print $3 ":" $1}')
-        ;;
+            network_range=$(ip route | awk '{if ($3 ~ /eth/ || $3 ~ /wlan/) print $3 ":" $1}')
+            ;;
         eth*|wlan*)
-        network_range=$(ip route | awk -v pattern=$interface '{if ($3 ~ pattern) print $3 ":" $1}')
-        #TODO check if interface exists
-        ;;
+            network_range=$(ip route | awk -v pattern=$interface '{if ($3 ~ pattern) print $3 ":" $1}')
+            ;;
         *)
-        alert "$interface is an invalid argument"
-        exit 1 #FIXME
-        ;;
+            alert "$interface is an invalid argument"
+            exit 1 #FIXME
+            ;;
     esac
-
-    # echo "$network_range"
 }
 
 # Function to perform a quick ARP scan and translate it to IP addresses
@@ -234,7 +294,8 @@ enumerate_targets() {
     # for x in "$network_range"; do echo "$x"; echo; done
 
     while IFS= read -r line; do
-        enum4linux "$line" > "${line}.enum"
+        enum4linux -a "$line" > "${SCAN_PATH}/${line}.enum"
+        #TODO add -p and -u
         echo
     done < "$targets_file"
     
@@ -288,11 +349,11 @@ scan_live_hosts() {
     echo
 }
 
-# Function to perform service scans for open ports
+# Function to perform service scan for open ports
 service_scan() {
     # local host="$1"
     # local port="$2"
-    title "perform service scans for open ports using Nmap..."
+    title "perform service scan using Nmap..."
     
 
 	while IFS= read -r line; do
@@ -368,16 +429,16 @@ display_findings() {
 main() {
     declare -g network_range rhosts
     declare -rg rhosts_file="${SCAN_PATH}/rhosts.txt"
+    declare -rg enums_file="${SCAN_PATH}/enum.txt"
     declare -rg sockets_file="${SCAN_PATH}/open_sockets.txt"
 
     init_checks "$@"
 
-    # check_user_list
-    # check_pass_list
+    [ -z "$pass_list" ] && generate_password_list
 
-# start_time=$(date +%s)
+    # start_time=$(date +%s)
 
-    declare -g adapter="eth1"
+    
     identify_network_range "$adapter" #FIXME not gateway doesnt masscan
     declare -g gw_adapter=$(ip route | awk '/default/ {print $5}')
     # echo "$network_range"
@@ -387,8 +448,8 @@ main() {
     # echo -e "$rhosts"
     echo -e "$rhosts" > "$rhosts_file"
 
-    # enumerate_targets "$rhosts_file" &
-    # local loading_msg_pid=$!
+    enumerate_targets "$rhosts_file" &
+    local loading_msg_pid=$!
     
     scan_live_hosts "$rhosts"
 
@@ -399,15 +460,18 @@ main() {
     # nmap --script "*vuln*
 
 
-    # wait $loading_msg_pid
+    wait $loading_msg_pid
 
-    title "done"
+    success "done"
 	exit 0
 
-    while IFS= read -r host; do
-        open_ports=$(grep -A 1 "$host" nmap_live_hosts.txt | grep "Ports:" | sed 's/.*Ports://' | tr ',' '\n' | awk -F'/' '{print $1":"$4}' | tr -d ' ')
-        brute_force_passwords "$host" "$user_list" "$pass_list" "$open_ports"
-    done < "ip_addresses.txt"
+    for file in $(find ./ -name "nmap_service_scan_*.txt")
+    do
+        # cat ${file} | awk '{print $2}' | grep -o "CVE.*" | sort -u | xargs -I{} searchsploit {} 
+        #TODO download https://vulners.com/seebug exploits from the ${file}
+        # cat nmap_service_scan_10.0.0.66.xml | grep "service name.*version[^ ]*" -o
+        echo $file
+    done
 
     display_statistics
     save_report
