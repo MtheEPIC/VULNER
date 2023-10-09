@@ -3,18 +3,12 @@
 #declare -rg 
 # LOG_PATH="/var/log/"
 declare -rg DEFAULT_MSG="loading..."
-# values for SSHPASS
-declare -g rm_ip
-declare -g rm_user
-declare -g rm_pass
-declare -g rm_port
-declare -rg SSH_PORT=22
 
 declare -rg utils_dir="$(dirname $(readlink -f "$0"))"
 source "${utils_dir}/color.sh"
 
-kt
-# msf
+# kt
+msf
 
 
 # print_color() {
@@ -51,6 +45,13 @@ note() {
 	echo -e "${NOTE_PREFIX}[+] ${NOTE_MSG}${msg}${NC}"
 }
 
+success() {
+	local msg
+	msg="$1"
+
+	echo -e "${SUCCESS_PREFIX}[+] ${SUCCESS_MSG}${msg}${NC}"
+}
+
 fail() {
 	[ $# -eq 0 ] && fail "Invalid use of \"fail\" function"
 	[ $# -eq 1 ] && alert "$1" && exit 1
@@ -62,6 +63,16 @@ fail() {
 
 	alert "$msg" && $rm_func $@ && exit 1
 
+}
+
+check_readable() {
+	local filename
+	[ $# -eq 1 ] && filename="$1" || { alert "wrong use of check_readable"; return 1; }
+
+	[ -z "$filename" ] && alert "the given arg is empty" && return 1;
+	[ ! -f "$filename" ] && alert "the given file doesnt exist" && return 1;
+	# [ ! -s "$filename" ] && alert "the given file is empty" && return 1;
+	[ ! -r "$filename" ] && alert "the given file doesnt have read perms" && return 1;
 }
 
 check_permissions() {
