@@ -242,3 +242,18 @@ ssh_wrapper() {
 	sshpass -p $rm_pass ssh -o StrictHostKeyChecking=no $rm_user@$rm_ip $@ 
 }
 
+add_pid_to_list() {
+	local new_pid
+
+	[ ! declare -p pid_list &>/dev/null ] && declare -g pid_list || pid_list+=" "
+
+	new_pid="$1"
+	pid_list+="$new_pid"
+}
+
+wait_for_all_pid() {
+	for pid in ${pid_list}; do
+		[[ $pid =~ ^[0-9]+$ ]] && wait "$pid"
+	done
+}
+
