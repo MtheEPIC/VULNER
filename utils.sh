@@ -7,8 +7,8 @@ declare -rg DEFAULT_MSG="loading..."
 declare -rg utils_dir="$(dirname $(readlink -f "$0"))"
 source "${utils_dir}/color.sh"
 
-# kt
-msf
+kt
+# msf
 
 
 # print_color() {
@@ -28,28 +28,28 @@ alert() {
 	local msg
 	msg="$1"
 
-	echo -e "${ALERT_PREFIX}[!] ${ALERT_MSG}${msg}${NC}"
+	echo -e "${ALERT_PREFIX} ${ALERT_MSG}${msg}${NC}"
 }
 
 title() {
 	local msg
 	msg="$1"
 
-	echo -e "${TITLE_PREFIX}[+] ${TITLE_MSG}${msg}${NC}"
+	echo -e "${TITLE_PREFIX} ${TITLE_MSG}${msg}${NC}"
 }
 
 note() {
 	local msg
 	msg="$1"
 
-	echo -e "${NOTE_PREFIX}[+] ${NOTE_MSG}${msg}${NC}"
+	echo -e "${NOTE_PREFIX} ${NOTE_MSG}${msg}${NC}"
 }
 
 success() {
 	local msg
 	msg="$1"
 
-	echo -e "${SUCCESS_PREFIX}[+] ${SUCCESS_MSG}${msg}${NC}"
+	echo -e "${SUCCESS_PREFIX} ${SUCCESS_MSG}${msg}${NC}"
 }
 
 fail() {
@@ -73,6 +73,8 @@ check_readable() {
 	[ ! -f "$filename" ] && alert "the given file doesnt exist" && return 1;
 	# [ ! -s "$filename" ] && alert "the given file is empty" && return 1;
 	[ ! -r "$filename" ] && alert "the given file doesnt have read perms" && return 1;
+
+	return 0
 }
 
 check_permissions() {
@@ -85,47 +87,103 @@ check_permissions() {
     [ "$current_permissions" -lt "$desired_permissions" ] && fail "You do not have sufficient permissions in this directory!"
 }
 
+foo() {
+	local word="$1"
+	local -r chars="-\|/"
+	local -r spaces="      "
+
+	local i
+	for ((i=0; i<${#word}; i++ )); do
+		# echo "$word -- ${word:i:1} -- $i -- ${#word} -- ${#word[@]}"
+		[[ ! ${word:i:1} =~ [[:alpha:]] ]] && continue #{ ((i+1 < ${#word})) && { echo "good"; continue; } || break; }
+			
+		curr_word="${word:0:i}$(echo ${word:i:1} | tr '[:lower:]' '[:upper:]')${word:i+1}"
+		curr_cycle_txt="${curr_word}${chars:j:1}"
+		
+		echo -ne "$spaces"
+		tput rc
+		echo -ne "$curr_cycle_txt"
+
+		(( j = (j + 1) % ${#chars} ))
+		sleep .1 # read -r -n 1 -t .001 -s && break 2 
+	done
+	return 0
+}
+
 # Function to cycle through a pattern and make a wave with a given word
 # Parameters:
 #	word to make a wave to it
 cycle_word_and_chars() {
 	local user_input=$1 #""
+	# [ -z "$user_input" ] && read -r user_input
 	# for x in "$@"; do
 	# 	user_input="$user_input$x"
 	# done
 	local -r user_input=${user_input,,}
-	local -r word="${user_input:-$DEFAULT_MSG}"
+	local word="${user_input:-$DEFAULT_MSG}"
 	local -r chars="-\|/"
 	local -r spaces="      "
 		
-	local j=0
+	# word="${TITLE_PREFIX} ${TITLE_MSG}running strings${NC}"
 
-	# echo $2
+	# stty -icanon min 0 time 0
+	# local curr_cycle_txt overwrite_length
+	# word="${TITLE_PREFIX}hello${SUCCESS_PREFIX}world${ALERT_PREFIX}wuw"
+	
+	# word # \e[\033[1;34m[+] \e[\033[0mrunning strings\e[\033[0m
+	no_ansi=$(echo "$word" | sed -E 's/\\e([0-9]|;|\\|\[)*m/\n/g' | awk 'NF') # ![+] !running strings!
+	ansi=$(echo "$word" | grep -E "\\\e([0-9]|;|\\\|\[)*m" -o) # | tr '\n' ' ' | xargs echo) # e[033[1;34m e[033[0m e[033[0m
 
-
-	while true; do
-		for (( i=0; i< ${#word}; i++ )); do
-			[[ ! ${word:i:1} =~ [[:alpha:]] ]] && continue
-				
-			curr_word="${word:0:i}$(echo ${word:i:1} | tr '[:lower:]' '[:upper:]')${word:i+1}"
-
-			# echo "${word:i:1}"
-			# echo $curr_word
-
-			local overwrite_length=$((${#curr_word}+1))
-
-			# echo $word
-			# echo $curr_word
-			echo -ne "$curr_word${chars:j:1}"
-			# echo -ne "${CYAN}$curr_word${chars:j:1} ${NC}"
-			tput cub $overwrite_length
-
-			(( j = (j + 1) % ${#chars} ))
-			sleep .1
-			read -r -n 1 -t .001 -s && break 2 
-		done
+	mapfile -t text_arr <<< "$no_ansi"
+	mapfile -t ansi_arr <<< "$ansi"
+	
+	# [[ $word =~ ^\\e ]] && echo "yes" || echo "no"
+	while (( ${#ansi_arr[@]} > ${#text_arr[@]} )); do
+		text_arr+=(" ")
 	done
-	echo -e "\r$word$spaces" #space is used to remove the cycling char
+	local len=${#ansi_arr[@]}
+	tput sc
+
+	local i=0 j=0
+	local ii=0 jj=0
+	local curr_i=0
+	local to_print
+	while true; do
+		to_print=""
+		ii=0 jj=0
+		(( i = i % len ))
+		# echo "$i--$curr_i"
+		
+
+		for ((; ii<i; ii++)); do
+			to_print+="${ansi_arr[ii]}${text_arr[ii]}"
+		done	
+
+
+		# echo "${text_arr[i]:curr_i:1}"
+		[[ ! ${text_arr[i]:curr_i:1} =~ [[:alpha:]] ]] && \
+		{ (( curr_i = (curr_i + 1) % ${#text_arr[i]} )); (( curr_i==0 )) && (( i = (i + 1) % len )); continue; }
+		curr_word="${text_arr[i]:0:curr_i}$(echo ${text_arr[i]:curr_i:1} | tr '[:lower:]' '[:upper:]')${text_arr[i]:curr_i+1}"
+		(( curr_i = (curr_i + 1) % ${#curr_word} ))
+
+		to_print+="${ansi_arr[i]}${curr_word}"
+
+
+		for ((ii=i+1; ii<len; ii++)); do
+			to_print+="${ansi_arr[ii]}${text_arr[ii]}"
+		done
+
+		to_print+="${chars:j:1}"
+		tput rc
+		echo -ne "${to_print}"
+
+		(( curr_i==0 )) && (( i = (i + 1) % len ))
+		(( j = (j + 1) % ${#chars} ))
+		sleep .1
+	done
+
+	# echo -e "\r$word$spaces" #space is used to remove the cycling char
+	# stty icanon
 }
 
 # Function to make a wave with a given word
@@ -242,18 +300,40 @@ ssh_wrapper() {
 	sshpass -p $rm_pass ssh -o StrictHostKeyChecking=no $rm_user@$rm_ip $@ 
 }
 
-add_pid_to_list() {
-	local new_pid
+run_in_background() {
+	local std_file
+	std_file=$(mktemp)
+
+	"$@" > "$std_file" & add_to_background $! "$std_file"
+}
+
+add_to_background() {
+	local new_pid temp_file
 
 	[ ! declare -p pid_list &>/dev/null ] && declare -g pid_list || pid_list+=" "
 
 	new_pid="$1"
-	pid_list+="$new_pid"
+	temp_file="$2"
+
+	pid_list+="${new_pid}-${temp_file}"
+	# std_files+=" "
 }
 
-wait_for_all_pid() {
-	for pid in ${pid_list}; do
-		[[ $pid =~ ^[0-9]+$ ]] && wait "$pid"
+wait_for_all_background() {
+	for pid_file in ${pid_list}; do
+		local pid file
+		pid=$(echo "$pid_file" | cut -d '-' -f 1)
+		file=$(echo "$pid_file" | cut -d '-' -f 2)
+		
+		# if pid is already dead remove the std file
+		# [ "$(ps -p 4743 -o pid=)" ] || rm "$file"
+		# if the std file got corrupted kill the proccess
+		check_readable "$file"; [ $? -eq 1 ] && {  alert "std file for ${pid} (${file} got corrupted)"; \
+		rm "$file" 2>/dev/null; kill ${pid}; }
+
+		wait "$pid"
+		cat "$file"
+		rm "$file"
 	done
 }
 
