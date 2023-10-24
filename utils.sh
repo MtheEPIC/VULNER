@@ -10,20 +10,9 @@ source "${utils_dir}/color.sh"
 kt
 # msf
 
-
-# print_color() {
-#     local color_code="$1"
-#     local message="$2"
-#     echo -e "${color_code}${message}${NC}"
-# }
-
-# prefixed_message() {
-# 	local prefix="$1"
-#     local color_code="$2"
-#     local message="$3"
-#     echo -e "${GREEN}${prefix}${color_code}${message}${NC}"
-# }
-
+# Function to print the message with a specific style: succalertess
+# Parameters:
+#	message to print
 alert() {
 	local msg
 	msg="$1"
@@ -31,6 +20,9 @@ alert() {
 	echo -e "${ALERT_PREFIX} ${ALERT_MSG}${msg}${NC}"
 }
 
+# Function to print the message with a specific style: title
+# Parameters:
+#	message to print
 title() {
 	local msg
 	msg="$1"
@@ -38,6 +30,9 @@ title() {
 	echo -e "${TITLE_PREFIX} ${TITLE_MSG}${msg}${NC}"
 }
 
+# Function to print the message with a specific style: note
+# Parameters:
+#	message to print
 note() {
 	local msg
 	msg="$1"
@@ -45,6 +40,9 @@ note() {
 	echo -e "${NOTE_PREFIX} ${NOTE_MSG}${msg}${NC}"
 }
 
+# Function to print the message with a specific style: success
+# Parameters:
+#	message to print
 success() {
 	local msg
 	msg="$1"
@@ -65,6 +63,9 @@ fail() {
 
 }
 
+# Function to check if a given file is a readable non empty file
+# Parameters:
+#	file to check check
 check_readable() {
 	local filename
 	[ $# -eq 1 ] && filename="$1" || { alert "wrong use of check_readable"; return 1; }
@@ -77,64 +78,31 @@ check_readable() {
 	return 0
 }
 
-check_permissions() {
-    # Numeric representation of desired permissions: rwx (read, write, execute)
-    local desired_permissions=7
+# check_permissions() {
+#     # Numeric representation of desired permissions: rwx (read, write, execute)
+#     local desired_permissions=7
 
-    # Get numeric representation of current directory permissions
-    local current_permissions=$(stat -c '%a' .)
+#     # Get numeric representation of current directory permissions
+#     local current_permissions=$(stat -c '%a' .)
 
-    [ "$current_permissions" -lt "$desired_permissions" ] && fail "You do not have sufficient permissions in this directory!"
-}
-
-foo() {
-	local word="$1"
-	local -r chars="-\|/"
-	local -r spaces="      "
-
-	local i
-	for ((i=0; i<${#word}; i++ )); do
-		# echo "$word -- ${word:i:1} -- $i -- ${#word} -- ${#word[@]}"
-		[[ ! ${word:i:1} =~ [[:alpha:]] ]] && continue #{ ((i+1 < ${#word})) && { echo "good"; continue; } || break; }
-			
-		curr_word="${word:0:i}$(echo ${word:i:1} | tr '[:lower:]' '[:upper:]')${word:i+1}"
-		curr_cycle_txt="${curr_word}${chars:j:1}"
-		
-		echo -ne "$spaces"
-		tput rc
-		echo -ne "$curr_cycle_txt"
-
-		(( j = (j + 1) % ${#chars} ))
-		sleep .1 # read -r -n 1 -t .001 -s && break 2 
-	done
-	return 0
-}
+#     [ "$current_permissions" -lt "$desired_permissions" ] && fail "You do not have sufficient permissions in this directory!"
+# }
 
 # Function to cycle through a pattern and make a wave with a given word
 # Parameters:
 #	word to make a wave to it
 cycle_word_and_chars() {
-	local user_input=$1 #""
-	# [ -z "$user_input" ] && read -r user_input
-	# for x in "$@"; do
-	# 	user_input="$user_input$x"
-	# done
+	local user_input=$1
 	local -r user_input=${user_input,,}
-	local word="${user_input:-$DEFAULT_MSG}"
+	local -r word="${user_input:-$DEFAULT_MSG}"
 	local -r chars="-\|/"
 	local -r spaces="      "
+	local -r SLEEP_TIME=".1"
 		
-	# word="${TITLE_PREFIX} ${TITLE_MSG}running strings${NC}"
+	text=$(echo "$word" | sed -E 's/\\e([0-9]|;|\\|\[)*m/\n/g' | awk 'NF')
+	ansi=$(echo "$word" | grep -E "\\\e([0-9]|;|\\\|\[)*m" -o)
 
-	# stty -icanon min 0 time 0
-	# local curr_cycle_txt overwrite_length
-	# word="${TITLE_PREFIX}hello${SUCCESS_PREFIX}world${ALERT_PREFIX}wuw"
-	
-	# word # \e[\033[1;34m[+] \e[\033[0mrunning strings\e[\033[0m
-	no_ansi=$(echo "$word" | sed -E 's/\\e([0-9]|;|\\|\[)*m/\n/g' | awk 'NF') # ![+] !running strings!
-	ansi=$(echo "$word" | grep -E "\\\e([0-9]|;|\\\|\[)*m" -o) # | tr '\n' ' ' | xargs echo) # e[033[1;34m e[033[0m e[033[0m
-
-	mapfile -t text_arr <<< "$no_ansi"
+	mapfile -t text_arr <<< "$text"
 	mapfile -t ansi_arr <<< "$ansi"
 	
 	# [[ $word =~ ^\\e ]] && echo "yes" || echo "no"
@@ -152,22 +120,16 @@ cycle_word_and_chars() {
 		to_print=""
 		ii=0 jj=0
 		(( i = i % len ))
-		# echo "$i--$curr_i"
-		
 
 		for ((; ii<i; ii++)); do
 			to_print+="${ansi_arr[ii]}${text_arr[ii]}"
 		done	
 
-
-		# echo "${text_arr[i]:curr_i:1}"
 		[[ ! ${text_arr[i]:curr_i:1} =~ [[:alpha:]] ]] && \
 		{ (( curr_i = (curr_i + 1) % ${#text_arr[i]} )); (( curr_i==0 )) && (( i = (i + 1) % len )); continue; }
 		curr_word="${text_arr[i]:0:curr_i}$(echo ${text_arr[i]:curr_i:1} | tr '[:lower:]' '[:upper:]')${text_arr[i]:curr_i+1}"
 		(( curr_i = (curr_i + 1) % ${#curr_word} ))
-
 		to_print+="${ansi_arr[i]}${curr_word}"
-
 
 		for ((ii=i+1; ii<len; ii++)); do
 			to_print+="${ansi_arr[ii]}${text_arr[ii]}"
@@ -179,7 +141,7 @@ cycle_word_and_chars() {
 
 		(( curr_i==0 )) && (( i = (i + 1) % len ))
 		(( j = (j + 1) % ${#chars} ))
-		sleep .1
+		sleep ${SLEEP_TIME}
 	done
 
 	# echo -e "\r$word$spaces" #space is used to remove the cycling char
@@ -243,45 +205,118 @@ tee_audit() {
 	audit "$1"
 }
 
-# Function to check if an app is already installed
-# Parameters:
-#	$1: app name to check
-check_installed() {
-	if dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; then
-		audit "[#] $1 is already installed."
-		prefixed_message "[#] " "$CYAN" "$1 is already installed."
-		return 0  
+# # Function to check if an app is already installed
+# # Parameters:
+# #	$1: app name to check
+# check_installed() {
+# 	if dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; then
+# 		audit "[#] $1 is already installed."
+# 		prefixed_message "[#] " "$CYAN" "$1 is already installed."
+# 		return 0  
+# 	else
+# 		audit "[#] $1 isn't installed."
+# 		return 1  
+# 	fi
+# }
+
+# # Function to Loop through the programs array and check/install each program
+# # Paramets:
+# #	$1: array of function to install
+# install_programs() {
+# 	prefixed_message "[*] " "$BLUE" "Checking Installations"
+# 	local array=("$@")
+
+# 	for program in "${array[@]}"; do
+# 		# Skip installation if program is already installed
+# 		check_installed "$program" && continue 
+			
+# 		cycle_word_and_chars "[*] Installing $program..." &
+# 		local load_msg_pid=$!
+		
+# 		(
+# 			sudo apt-get update #TODO RUN ONCE
+# 			sudo apt-get install -y "$program" 
+# 		) &>/dev/null
+
+# 		kill $load_msg_pid
+# 		echo -e "\r[*] Installing $program... "
+# 		audit "[*] $program has been installed"
+# 	done
+# 	echo
+# }
+
+#######
+
+declare -g is_updated_static=false
+update_apt() {
+	! ${is_updated_static} && apt update &>/dev/null && is_updated_static=true
+}
+
+# Function to check if a program is available via APT
+check_program_available() {
+    local program="$1"
+    if apt-cache show "$program" &> /dev/null; then
+        return 0  # Program is available via APT
+    else
+        return 1  # Program is not available via APT
+    fi
+}
+
+# Function to check if a program is installed
+check_program_installed_non_apt() {
+    local program="$1"
+    if command -v "$program" &>/dev/null; then
+		return 0  # Program is installed
 	else
-		audit "[#] $1 isn't installed."
-		return 1  
+		return 1  # Program is not installed
 	fi
 }
 
-# Function to Loop through the programs array and check/install each program
-# Paramets:
-#	$1: array of function to install
+# Function to check if a program is installed
+check_program_installed() {
+    local program="$1"
+    if dpkg-query -W -f='${Status}' "$program" 2>/dev/null | grep -q "install ok installed"; then
+        return 0  # Program is installed
+    else
+        return $(check_program_installed_non_apt ${program})  # Program is not installed OR isnt in APT
+    fi
+}
+
+# Function to install a program using APT
+install_program (){
+    local program="$1"
+    if ! check_program_installed "$program"; then
+        if check_program_available "$program"; then
+			note "$program is installing"
+			update_apt
+            apt install -y "$program" &>/dev/null
+			success "$program was installed"
+        else
+            alert "$program is not available via APT."
+        fi
+    else
+        note "$program is already installed."
+    fi
+}
+
 install_programs() {
-	prefixed_message "[*] " "$BLUE" "Checking Installations"
-	local array=("$@")
+	local program programs
+	title "Checking and installing programs"
 
-	for program in "${array[@]}"; do
-		# Skip installation if program is already installed
-		check_installed "$program" && continue 
-			
-		cycle_word_and_chars "[*] Installing $program..." &
-		local load_msg_pid=$!
-		
-		(
-			sudo apt-get update #TODO RUN ONCE
-			sudo apt-get install -y "$program" 
-		) &>/dev/null
+	programs=("$@")
+	[ -z "${programs[0]}" ] && { alert "the given agument isn't an array"; return 1; }
+	[ ${#programs[@]} -eq 0 ] && { alert "the given array is empty"; return 1; }
 
-		kill $load_msg_pid
-		echo -e "\r[*] Installing $program... "
-		audit "[*] $program has been installed"
+	# Loop through the array and install the programs
+	for program in "${programs[@]}"; do
+		install_program "$program"
 	done
+
 	echo
 }
+
+#######
+
 
 # Function to request the user to input the remote server credentials
 # Note:
@@ -328,7 +363,7 @@ wait_for_all_background() {
 		# if pid is already dead remove the std file
 		# [ "$(ps -p 4743 -o pid=)" ] || rm "$file"
 		# if the std file got corrupted kill the proccess
-		check_readable "$file"; [ $? -eq 1 ] && {  alert "std file for ${pid} (${file} got corrupted)"; \
+		check_readable "$file" || { alert "std file for ${pid} (${file} got corrupted)"; \
 		rm "$file" 2>/dev/null; kill ${pid}; }
 
 		wait "$pid"
