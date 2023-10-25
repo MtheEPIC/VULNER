@@ -1,6 +1,6 @@
 # VULNER
 
-###  A Massive Exploiting Tool
+###  An Automatic Vulnerability Scanner Tool
 
 Identifying vulnerabilities inside the network takes time and should be executed often.
 Using automation can help improve the process and identify vulnerabilities before attackers do.
