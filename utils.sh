@@ -57,18 +57,18 @@ fail() {
 	local msg=$1
 	local rm_func=$2
 	shift 2
-	[ -z "$(declare -F $rm_func)" ] && fail "The passed function ($rm_func) isn't a valid function"
+	[ -z "$(declare -F "${rm_func}")" ] && fail "The passed function ($rm_func) isn't a valid function"
 
-	alert "$msg" && $rm_func $@ && exit 1
+	alert "$msg" && $rm_func "$@" && exit 1
 
 }
 
-# Function to check if a given file is a readable non empty file
+# Function to check if a given file is a readable file
 # Parameters:
 #	file to check check
 check_readable() {
 	local filename
-	[ $# -eq 1 ] && filename="$1" || { alert "wrong use of check_readable"; return 1; }
+	{ [ $# -eq 1 ] && filename="$1"; } || { alert "wrong use of check_readable"; return 1; }
 
 	[ -z "$filename" ] && alert "the given arg is empty" && return 1;
 	[ ! -f "$filename" ] && alert "the given file doesnt exist" && return 1;
@@ -113,12 +113,12 @@ cycle_word_and_chars() {
 	tput sc
 
 	local i=0 j=0
-	local ii=0 jj=0
+	local ii=0
 	local curr_i=0
 	local to_print
 	while true; do
 		to_print=""
-		ii=0 jj=0
+		ii=0
 		(( i = i % len ))
 
 		for ((; ii<i; ii++)); do
@@ -127,7 +127,7 @@ cycle_word_and_chars() {
 
 		[[ ! ${text_arr[i]:curr_i:1} =~ [[:alpha:]] ]] && \
 		{ (( curr_i = (curr_i + 1) % ${#text_arr[i]} )); (( curr_i==0 )) && (( i = (i + 1) % len )); continue; }
-		curr_word="${text_arr[i]:0:curr_i}$(echo ${text_arr[i]:curr_i:1} | tr '[:lower:]' '[:upper:]')${text_arr[i]:curr_i+1}"
+		curr_word="${text_arr[i]:0:curr_i}$(echo "${text_arr[i]:curr_i:1}" | tr '[:lower:]' '[:upper:]')${text_arr[i]:curr_i+1}"
 		(( curr_i = (curr_i + 1) % ${#curr_word} ))
 		to_print+="${ansi_arr[i]}${curr_word}"
 
@@ -156,7 +156,7 @@ cycle_word() {
 	local word="${user_input:-$DEFAULT_MSG}"
 	while true; do
 		for (( i=0; i< ${#word}; i++ )); do
-			curr_word="${word:0:i}$(echo ${word:i:1} | tr '[:lower:]' '[:upper:]')${word:i+1}"
+			curr_word="${word:0:i}$(echo "${word:i:1}" | tr '[:lower:]' '[:upper:]')${word:i+1}"
 			printf "%s\r" "$curr_word"
 			read -r -n 1 -t .1 -s && break 2
 		done
@@ -179,7 +179,7 @@ cycle_char() {
 
 # Function to check for internet connectivity without getting blocked
 check_connectivity() {
-	nslookup google.com > /dev/null && return 0
+	nslookup google.com &>/dev/null && return 0
 	fail "No internet connection available!"
 }
 
@@ -205,51 +205,9 @@ tee_audit() {
 	audit "$1"
 }
 
-# # Function to check if an app is already installed
-# # Parameters:
-# #	$1: app name to check
-# check_installed() {
-# 	if dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; then
-# 		audit "[#] $1 is already installed."
-# 		prefixed_message "[#] " "$CYAN" "$1 is already installed."
-# 		return 0  
-# 	else
-# 		audit "[#] $1 isn't installed."
-# 		return 1  
-# 	fi
-# }
-
-# # Function to Loop through the programs array and check/install each program
-# # Paramets:
-# #	$1: array of function to install
-# install_programs() {
-# 	prefixed_message "[*] " "$BLUE" "Checking Installations"
-# 	local array=("$@")
-
-# 	for program in "${array[@]}"; do
-# 		# Skip installation if program is already installed
-# 		check_installed "$program" && continue 
-			
-# 		cycle_word_and_chars "[*] Installing $program..." &
-# 		local load_msg_pid=$!
-		
-# 		(
-# 			sudo apt-get update #TODO RUN ONCE
-# 			sudo apt-get install -y "$program" 
-# 		) &>/dev/null
-
-# 		kill $load_msg_pid
-# 		echo -e "\r[*] Installing $program... "
-# 		audit "[*] $program has been installed"
-# 	done
-# 	echo
-# }
-
-#######
-
-declare -g is_updated_static=false
+# Function to update the apt repositories, run once per execution 
 update_apt() {
-	! ${is_updated_static} && apt update &>/dev/null && is_updated_static=true
+	! declare -p is_updated &>/dev/null && declare -g is_updated && apt update &>/dev/null
 }
 
 # Function to check if a program is available via APT
@@ -278,29 +236,33 @@ check_program_installed() {
     if dpkg-query -W -f='${Status}' "$program" 2>/dev/null | grep -q "install ok installed"; then
         return 0  # Program is installed
     else
-        return $(check_program_installed_non_apt ${program})  # Program is not installed OR isnt in APT
+        return $(check_program_installed_non_apt "${program}")  # Program is not installed OR isnt in APT
     fi
 }
 
 # Function to install a program using APT
 install_program (){
     local program="$1"
-    if ! check_program_installed "$program"; then
-        if check_program_available "$program"; then
-			note "$program is installing"
-			update_apt
-            apt install -y "$program" &>/dev/null
-			success "$program was installed"
-        else
-            alert "$program is not available via APT."
-        fi
-    else
+	
+    if check_program_installed "$program"; then
         note "$program is already installed."
+		return 0
     fi
+	if ! check_program_available "$program"; then
+		alert "$program is not available via APT."
+		return 1
+	fi
+
+	note "$program is installing"
+	update_apt
+	apt install -y "$program" &>/dev/null
+	success "$program was installed"
+	return 0
 }
 
 install_programs() {
 	local program programs
+	local -i errors
 	title "Checking and installing programs"
 
 	programs=("$@")
@@ -308,11 +270,13 @@ install_programs() {
 	[ ${#programs[@]} -eq 0 ] && { alert "the given array is empty"; return 1; }
 
 	# Loop through the array and install the programs
+	errors=0
 	for program in "${programs[@]}"; do
 		install_program "$program"
+		((errors+=$?))
 	done
-
 	echo
+	return $([ "$errors" -eq 0 ])
 }
 
 #######
@@ -330,9 +294,9 @@ get_remote_creds() {
 }
 
 ssh_wrapper() {
-	[ -z "$rm_user" ] && fail "\"ssh_wrapper\""
+	[ -z "${rm_user}" ] && fail "\"ssh_wrapper\""
 
-	sshpass -p $rm_pass ssh -o StrictHostKeyChecking=no $rm_user@$rm_ip $@ 
+	sshpass -p "${rm_pass}" ssh -o StrictHostKeyChecking=no "${rm_user}@${rm_ip}" "$@" 
 }
 
 run_in_background() {
@@ -345,7 +309,7 @@ run_in_background() {
 add_to_background() {
 	local new_pid temp_file
 
-	[ ! declare -p pid_list &>/dev/null ] && declare -g pid_list || pid_list+=" "
+	{ ! declare -p pid_list &>/dev/null && declare -g pid_list; } || pid_list+=" "
 
 	new_pid="$1"
 	temp_file="$2"
@@ -364,7 +328,7 @@ wait_for_all_background() {
 		# [ "$(ps -p 4743 -o pid=)" ] || rm "$file"
 		# if the std file got corrupted kill the proccess
 		check_readable "$file" || { alert "std file for ${pid} (${file} got corrupted)"; \
-		rm "$file" 2>/dev/null; kill ${pid}; }
+		rm "$file" 2>/dev/null; kill "${pid}"; }
 
 		wait "$pid"
 		cat "$file"
