@@ -40,19 +40,31 @@ USER_DIR=$(pwd)
 readonly SCRIPT_DIR USER_DIR
 source "${SCRIPT_DIR}/utils.sh"
 
-declare -rg LOG_PATH="/var/log/vuln.log"
+# FILES
+declare -rg LOG_PATH="/var/log/vuln.log" #TODO use it
 declare -rg SCAN_PATH="${USER_DIR}/vuln_scans" #_$(date +%s)"
 # declare -rg TEMP_PATH="${USER_DIR}/temp"
 # declare -rg rhosts_file="${SCAN_PATH}/rhosts.txt"
-# declare -rg enums_file="${SCAN_PATH}/enum.txt"
 declare -rg sockets_file="${SCAN_PATH}/open_sockets.txt"
+declare -rg DEFAULT_USR_LST="/usr/share/wordlists/metasploit/ipmi_users.txt"
+declare -rg DEFAULT_PAS_LST="/usr/share/wordlists/metasploit/default_pass_for_services_unhash.txt"
 
+# PATTERNS
+declare -rg report_file_prefix="${SCAN_PATH}/report_"
+declare -rg nmap_sv_file_prefix="${SCAN_PATH}/nmap_service_version_scan_"
+declare -rg enums_file_prefix="${SCAN_PATH}/enum_"
+declare -rg hydra_file_prefix="${SCAN_PATH}/hydra_"
+
+
+# VARS
 declare -rg USERNAME="${SUDO_USER:-$USER}"
+
+
 
 declare -g adapter="eth1" #TODO remove after debug
 
-declare -rg DEFAULT_USR_LST="/usr/share/wordlists/metasploit/ipmi_users.txt"
-declare -rg DEFAULT_PAS_LST="/usr/share/wordlists/metasploit/default_pass_for_services_unhash.txt"
+
+
 declare -g user_list="${DEFAULT_USR_LST}"
 declare -g pass_list="${DEFAULT_PAS_LST}"
 
@@ -61,20 +73,20 @@ declare -rg IS_NUM="^[0-9]+$"
 
 
 use_user_privileges() {
-	sudo -u "$USERNAME" "$@"
+	sudo -u "$USERNAME" "$@" && return 0 || return 1
 }
 
 # Check if running as root
-function check_root() {
+check_root() {
     if [[ $EUID -ne 0 ]]; then
-        echo "This script must be run as root."
-        exit 1
+        alert "This script must be run as root."
+        return 1
     fi
     return 0
 }
 
 # Function to display usage message
-function usage() {
+usage() {
     cat <<-EOM
 Usage: $0 [-U FILE | -u STRING ] [[-P FILE | -p STRING] | [-g]] [-a {all, gateway, eth0, wlan0}] [-h] [-r ipv4]
 Options:
@@ -194,19 +206,36 @@ parse_pass_str() {
 
 # Function to check the init condition
 init_checks() {
-    check_root
+    check_root || return 1
 
-    [ ! -d "$SCAN_PATH" ] && mkdir "$SCAN_PATH"
-	[ ! -f "$LOG_PATH" ] && sudo touch "$LOG_PATH"
+    [ ! -d "$SCAN_PATH" ] && { use_user_privileges mkdir "$SCAN_PATH" || return 1; }
+	[ ! -f "$LOG_PATH" ] && { touch "$LOG_PATH" && chown "${USERNAME}:${USERNAME}" "${LOG_PATH}" || return 1; }
 
-    parse_arguments "$@"
+    parse_arguments "$@" || return 1
+}
+
+# Function to display relevant findings for a given IP address
+display_findings() {
+    local ip report_file
+    ip="$1"
+
+    report_file="${report_file_prefix}${ip}"
+    report_site="${nmap_sv_file_prefix}${ip}.html"
+    
+    # [ -f "${SCAN_PATH}/${report}" ] #TODO check if file exists
+    check_readable "${report_file}" || exit 1
+    cat "${report_file}"
+    check_readable "${report_site}" && open "${report_site}"
+
+    # grep -A 1 "$ip" nmap_live_hosts.txt
+    # grep "$ip" vulnerabilities.txt
+    # grep "$ip" result_*
 }
 
 update_db() {
-    (   
-        nmap --script-updatedb  
-        searchsploit -u
-    ) &>/dev/null
+    nmap --script-updatedb &>/dev/null || { alert "nmap update failed"; return 1; }
+    searchsploit -u &>/dev/null || { alert "searchsploit update failed"; return 1; }
+    return 0
 }
 
 get_valid_adapters() {
@@ -306,9 +335,9 @@ arp_scan() {
         adapter=$(echo "$element" | cut -d ':' -f 1)
         note "Scanning $adapter"
         arp_res=$(arp-scan --localnet -I "$adapter" 2>/dev/null | awk 'NR>2 {print $1}' | head -n -3) 
-        rhosts+="$arp_res\n"
+        targets+="$arp_res\n"
     done
-    rhosts=$(echo -e "$rhosts" | awk '$NF' | sort -u)
+    targets=$(echo -e "$targets" | awk '$NF' | sort -u)
 
     echo
 }
@@ -319,10 +348,10 @@ enumerate_targets() {
     targets="$1"
 
     title "Enumerating live hosts..."
-    while IFS= read -r line; do
-        enum4linux -a "$line" > "${SCAN_PATH}/${line}.enum"
+    while IFS= read -r target; do
+        enum4linux -a "$target" > "${enums_file_prefix}${target}"
         #TODO add -p and -u
-        echo >> "${SCAN_PATH}/${line}.enum"
+        echo >> "${enums_file_prefix}${target}"
     done <<< "$targets"
     echo
 }
@@ -358,6 +387,14 @@ scan_live_hosts() {
     echo
 }
 
+nmap_xml_to_html() {
+    local file_html
+    while IFS= read -r file_xml; do
+        file_html="${file_xml:0:(${#file_xml}-4)}.html"
+        xsltproc "${file_xml}" > "${file_html}"
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.xml")
+}
+
 # Function to perform service scan for open ports
 service_version_scan() {
     # local host="$1"
@@ -370,20 +407,16 @@ service_version_scan() {
 		ports=$(cut -d ' ' -f 2- <<< "${line}" | sed -E 's!/[^,]*, !,!g ; s|/ $||' )
 
         note "scanning $ip"
-		nmap -n -Pn -T4 -sV -O --script "*vuln*" -p "${ports}" "${ip}" -oN "nmap_service_version_scan_${ip}.txt" -oX "nmap_service_version_scan_${ip}.xml" &>/dev/null
-        xsltproc "nmap_service_version_scan_${ip}.xml" > "nmap_service_version_scan_${ip}.html"
+		nmap -n -Pn -T4 -sV -O --script "*vuln*" -p "${ports}" "${ip}" -oN "${nmap_sv_file_prefix}${ip}.txt" -oX "${nmap_sv_file_prefix}${ip}.xml" &>/dev/null
+        xsltproc "${nmap_sv_file_prefix}${ip}.xml" > "${nmap_sv_file_prefix}${ip}.html"
 	done < "${sockets_file}"
-
-    local file_html
-    while IFS= read -r file_xml; do
-        file_html="${file_xml:0:(${#file_xml}-4)}.html"
-        xsltproc "${file_xml}" > "${file_html}"
-    done < <(find ./ -name "nmap_service_version_scan_*.xml")
     echo
+
+    nmap_xml_to_html
 }
 
 # Function to check for known CVEs based on the service scan
-check_cve() {
+get_cve_payloads() {
     title "Checking for possible CVE"
     local file_prefix found_cve cve_payloads cve_sum cve_hosts payload_sum payload_hosts 
 
@@ -406,8 +439,8 @@ check_cve() {
         fi
 
         #TODO download https://vulners.com/seebug exploits from the ${file}
-        # cat nmap_service_version_scan_10.0.0.66.xml | grep "service name.*version[^ ]*" -o
-    done < <(find ./ -name "nmap_service_version_scan_*.txt")
+        # cat ${nmap_sv_file_prefix}10.0.0.66.xml | grep "service name.*version[^ ]*" -o
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.txt")
 
     [[ ${cve_sum} =~ ${IS_NUM} ]] && note "found ${cve_sum} CVEs in ${cve_hosts} targets"
     [[ ${payload_sum} =~ ${IS_NUM} ]] && note "searchsploit found ${payload_sum} payloads for ${payload_hosts} targets"
@@ -415,7 +448,7 @@ check_cve() {
     echo
 }
 
-find_payloads() {
+get_service_payloads() {
     title "Checking for searchploit payloads for services"
     local file_prefix payloads_file found_services found_payloads payload_sum payload_hosts 
 
@@ -447,7 +480,7 @@ find_payloads() {
         echo "${found_payloads}" > "${payloads_file}"
         ((payload_sum += $(wc -l <<< "${found_payloads}")))
         ((payload_hosts += 1))
-    done < <(find ./ -name "nmap_service_version_scan_*.txt")
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.txt")
 
     [[ ${payload_sum} =~ ${IS_NUM} ]] && note "searchsploit found ${payload_sum} payloads for ${payload_hosts} targets"
     echo
@@ -456,12 +489,12 @@ find_payloads() {
 # Function to check for the use of weak passwords
 online_attack() {
     title "Attempting a bruth force attack"
-
+    #TODO add findings from enum to -U: grep -Eo "^user:\[[^ ]+\]" "vuln_scans/enum_10.0.0.66" | sed -E 's/^.+\[//; s/\]$//'
     local line
     while IFS= read -r line; do
         local ip services sp_socket service port
 
-        # if there are no valid port services contine to the next target
+        # if there are no valid port services continue to the next target
         services=$(echo "$line" | grep -E "[0-9]+/[a-z|-]+" -o)
         { [ -n "$services" ] && sp_socket=$(head -n 1 <<< "$services"); } || continue
 
@@ -490,48 +523,43 @@ brute_force_passwords() {
     port="$3"
 
     note "Brute forcing $service on $ip:$port"
-    use_user_privileges hydra -L "$user_list" -P "$pass_list" "$ip" "$service" -s "$port" -o "hydra_${ip}_${service}.txt" &>/dev/null
+    use_user_privileges hydra -L "$user_list" -P "$pass_list" "$ip" "$service" -s "$port" -o "${hydra_file_prefix}${ip}_${service}" &>/dev/null
     
-    result="$(grep -w login "hydra_${ip}_${service}.txt" | tail -n 1)"
+    result="$(grep -w login "${hydra_file_prefix}${ip}_${service}" | tail -n 1)"
     { [ -n "$result" ] && success "$result"; } || alert "attack failed"
 }
 
 # Function to display general statistics
 display_statistics() {
-    local end_time
-    end_time=$(date)
-    local live_hosts
-    live_hosts=$(wc -l < ip_addresses.txt)
-    # local start_time
-    # start_time=$(cat script_start_time.txt)
-    local total_time
-    total_time=$((end_time - start_time))
-    echo "Scan completed at: $end_time"
-    echo "Total time (secs): $total_time"
-    echo "Number of live hosts found: $live_hosts"
+    local delta_secs total_time report_files
+    delta_secs="$1"
+    total_time=$(echo "scale=2; ${delta_secs}/60" | bc)
+    report_files=$(find "${SCAN_PATH}" -type f -wholename "${report_file_prefix}*" | wc -l)
+
+    success "Scan completed at: $(date)"
+    success "Total time (min): $total_time"
+    success "Number of created report files: $report_files"
 }
 
 # Function to save results into a report
 save_report() {
-    local report_file="scan_report.txt"
-    cat nmap_live_hosts.txt > "$report_file"
-    { cat vulnerabilities.txt; cat result_*; } >> "$report_file"
-}
+    title "Saving results into a report file"
 
-# Function to display relevant findings for a given IP address
-display_findings() {
-    local ip report_file
-    ip="$1"
+    local targets="$1"
+    while IFS= read -r target; do
+        local report_file services hydra enum 
+        report_file="${report_file_prefix}${target}"
+        use_user_privileges touch "${report_file}" || continue
 
-    report_file="${SCAN_PATH}/${ip}_report.txt"
-    
-    # [ -f "${SCAN_PATH}/${report}" ] #TODO check if file exists
-    check_readable "${report_file}" || exit 1
-    cat "${report_file}"
+        services=$(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}${target}.txt" | head -n 1)
+        hydra=$(find "${SCAN_PATH}" -type f -wholename "${hydra_file_prefix}${target}*" | head -n 1)
+        enum="${enums_file_prefix}${target}"
 
-    # grep -A 1 "$ip" nmap_live_hosts.txt
-    # grep "$ip" vulnerabilities.txt
-    # grep "$ip" result_*
+        [ -s "${services}" ] && ( title "nmap results:"; cat "${services}"; echo ) >> "${report_file}" 
+        [ -s "${hydra}" ] && ( title "hydra results:"; grep -w login "${hydra}" | tail -n 1; echo ) >> "${report_file}" 
+        [ -s "${enum}" ] && title "for enumeration results look in: ${enum}" >> "${report_file}"
+    done <<< "${targets}"
+    echo
 }
 
 # TODO capture output from with_loading_animation
@@ -557,37 +585,41 @@ function with_loading_animation() {
 
 # Main function
 main() {
-    declare -g network_range rhosts
-    local start_time end_time
+    declare -g network_range targets
+    local -i start_time 
     local apps=( "arp-scan" "masscan" "nmap" "searchsploit" "hydra" "crunch" "xsltproc") #medusa mfsconsole 
 
-    init_checks "$@"
-    install_programs "${apps[@]}"
-
-    update_db
-
+    init_checks "$@" || exit 1
+    install_programs "${apps[@]}" || exit 1
+    update_db || exit 1
+    
     start_time=$(date +%s)
 
+    # Reconnaissance
     with_loading_animation "Identifying LAN network range" identify_network_range "$adapter"
     with_loading_animation "Performing a quick ARP scan... " arp_scan "$network_range" #TODO maybe add ping scan?
-    [ -z "$rhosts" ] && { alert "no targets in LAN"; exit 0; }
+    [ -z "$targets" ] && { alert "no targets in LAN"; exit 0; }
 
-    run_in_background enumerate_targets "$rhosts"
+    run_in_background enumerate_targets "$targets"
     
-    with_loading_animation "Scanning for open ports... " scan_live_hosts "$rhosts"
+    with_loading_animation "Scanning for open ports... " scan_live_hosts "$targets"
 	with_loading_animation "Scanning for service version and vulnerability..." service_version_scan
 
-    # Step 2
-    run_in_background check_cve
-    run_in_background find_payloads
+    # Weaponization
+    run_in_background get_cve_payloads
+    run_in_background get_service_payloads
+    
+    # Delivery
     run_in_background online_attack
 
+    # TODO add Exploitation
+
+    # custom wait
     wait_for_all_background
 
-    # display_statistics
-    # save_report
-    
-    success "script is done"
+    # Save and display results
+    save_report "${targets}" #TODO add get_cve_payloads, get_service_payloads to report
+    display_statistics $(($(date +%s) - start_time))
 }
 
 # Call the main function and pass all script arguments
