@@ -39,9 +39,13 @@ declare -g USER_DIR
 USER_DIR=$(pwd)
 readonly SCRIPT_DIR USER_DIR
 source "${SCRIPT_DIR}/utils.sh"
+source "${SCRIPT_DIR}/vuln_config"
+
+set_default_style "${default_style}"
+# get_default_style
 
 # FILES
-declare -rg LOG_PATH="/var/log/vuln.log" #TODO use it
+# declare -rg LOG_PATH="/var/log/vuln.log" #TODO use it
 declare -rg SCAN_PATH="${USER_DIR}/vuln_scans" #_$(date +%s)"
 # declare -rg TEMP_PATH="${USER_DIR}/temp"
 # declare -rg rhosts_file="${SCAN_PATH}/rhosts.txt"
@@ -221,7 +225,7 @@ init_checks() {
     check_root || return 1
 
     [ ! -d "$SCAN_PATH" ] && { use_user_privileges mkdir "$SCAN_PATH" || return 1; }
-	[ ! -f "$LOG_PATH" ] && { touch "$LOG_PATH" && chown "${USERNAME}:${USERNAME}" "${LOG_PATH}" || return 1; }
+	# [ ! -f "$LOG_PATH" ] && { touch "$LOG_PATH" && chown "${USERNAME}:${USERNAME}" "${LOG_PATH}" || return 1; }
 
     parse_arguments "$@" || return 1
 }

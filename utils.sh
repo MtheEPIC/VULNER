@@ -7,9 +7,6 @@ declare -rg DEFAULT_MSG="loading..."
 declare -rg utils_dir="$(dirname $(readlink -f "$0"))"
 source "${utils_dir}/color.sh"
 
-kt
-# msf
-
 # Function to print the message with a specific style: succalertess
 # Parameters:
 #	message to print
@@ -146,6 +143,12 @@ cycle_word_and_chars() {
 
 	# echo -e "\r$word$spaces" #space is used to remove the cycling char
 	# stty icanon
+}
+
+
+cycle_title() {
+	local user_input=$1
+	cycle_word_and_chars "${TITLE_PREFIX} ${TITLE_MSG}${user_input}${NC}"
 }
 
 # Function to make a wave with a given word
@@ -315,7 +318,6 @@ add_to_background() {
 	temp_file="$2"
 
 	pid_list+="${new_pid}-${temp_file}"
-	# std_files+=" "
 }
 
 wait_for_all_background() {

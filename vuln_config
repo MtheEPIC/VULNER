@@ -1,0 +1,6 @@
+# to set a setting uncomment the line
+
+# default echo style
+# default_style=full
+# default_style=prefix
+# default_style=none

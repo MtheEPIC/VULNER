@@ -15,7 +15,7 @@ NBC="\e[\033[49m"
 GR="\e[\033[1;32;41m"
 
 # Themes
-kt() {
+full() {
     ALERT_PREFIX="${RED}[!]"
     ALERT_MSG=$RED
 
@@ -29,7 +29,7 @@ kt() {
     SUCCESS_MSG=$GREEN
 }
 
-msf() {
+prefix() {
     ALERT_PREFIX="${RED}[!]"
     ALERT_MSG=$NC
 
@@ -42,3 +42,39 @@ msf() {
     SUCCESS_PREFIX="${GREEN}[✔]"
     SUCCESS_MSG=$NC
 }
+
+none() {
+    ALERT_PREFIX="${NC}"
+    ALERT_MSG=""
+
+    TITLE_PREFIX="${NC}"
+    TITLE_MSG=""
+
+    NOTE_PREFIX="${NC}"
+    NOTE_MSG=""
+
+    SUCCESS_PREFIX="${NC}"
+    SUCCESS_MSG=""
+}
+
+set_default_style() {
+    case $1 in
+        full)
+            full
+            ;;
+        prefix)
+            prefix
+            ;;
+        none)
+            none
+            ;;
+        *)
+            ;;
+    esac
+}
+
+get_default_style() {
+    prefix
+}
+
+get_default_style
