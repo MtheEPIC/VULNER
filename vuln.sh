@@ -52,6 +52,10 @@ declare -rg DEFAULT_PAS_LST="/usr/share/wordlists/metasploit/default_pass_for_se
 # PATTERNS
 declare -rg report_file_prefix="${SCAN_PATH}/report_"
 declare -rg nmap_sv_file_prefix="${SCAN_PATH}/nmap_service_version_scan_"
+declare -rg nmap_sv_vuln_file_prefix="${SCAN_PATH}/nmap_service_vuln_scan_"
+declare -rg cve_file_prefix="${SCAN_PATH}/cve_"
+declare -rg payloads_cve_file_prefix="${SCAN_PATH}/cve_payloads_"
+declare -rg payloads_sv_file_prefix="${SCAN_PATH}/service_payloads_"
 declare -rg enums_file_prefix="${SCAN_PATH}/enum_"
 declare -rg hydra_file_prefix="${SCAN_PATH}/hydra_"
 
@@ -147,8 +151,10 @@ parse_arguments() {
 parse_adapter() {
     local pattern
     pattern="^(all|gateway)$|^(eth|wlan)[0-9]+$"
+namespaces="^(all|gateway)$"
     
     { [[ $1 =~ $pattern ]] && adapter="$1"; } || { usage; exit 1; }
+[[ $1 =~ $namespaces ]] && return 0
     
     for valid_adapter in $(get_valid_adapters)
     do
@@ -160,12 +166,18 @@ parse_adapter() {
     exit 1
 }
 
+report_usage() {
+	note "use one of this:"
+	grep -Eo "$IP_PATTERN" <(find "${SCAN_PATH}" -type f -wholename "${report_file_prefix}*")
+	usage
+}
+
 parse_report() {
     local pattern ip
     pattern="^${IP_PATTERN}$" #TODO assume pareten is type a/b/c
     ip="$1"
     
-    { [[ ${ip} =~ $pattern ]] && display_findings "${ip}"; } || { usage; exit 1; }
+    { [[ ${ip} =~ $pattern ]] && display_findings "${ip}"; exit 0; } || { report_usage; exit 1; }
 }
 
 # Function to check if the given user list is valid, if not quit
@@ -222,45 +234,19 @@ display_findings() {
     report_file="${report_file_prefix}${ip}"
     report_site="${nmap_sv_file_prefix}${ip}.html"
     
-    # [ -f "${SCAN_PATH}/${report}" ] #TODO check if file exists
     check_readable "${report_file}" || exit 1
     cat "${report_file}"
     check_readable "${report_site}" && open "${report_site}"
-
-    # grep -A 1 "$ip" nmap_live_hosts.txt
-    # grep "$ip" vulnerabilities.txt
-    # grep "$ip" result_*
 }
 
 update_db() {
     nmap --script-updatedb &>/dev/null || { alert "nmap update failed"; return 1; }
-    searchsploit -u &>/dev/null || { alert "searchsploit update failed"; return 1; }
+    searchsploit -u &>/dev/null #|| { alert "searchsploit update failed"; return 1; }
     return 0
 }
 
 get_valid_adapters() {
     ip -4 route | grep -o "dev [^ ]*" | cut -d ' ' -f 2 | sort -u
-}
-
-# Function to check and install required apps
-check_and_install_apps() {
-    local apps=( "arp-scan" "masscan" "nmap" "searchsploit" "hydra" "crunch") #medusa mfsconsole xsltproc
-    for app in "${apps[@]}"; do
-        if ! command -v "$app" &>/dev/null; then
-            echo "$app is not installed. Installing..."
-            case "$app" in
-                "searchsploit")
-                    sudo apt-get install exploitdb -y
-                    ;;
-                "masscan")
-                    sudo apt-get install masscan -y
-                    ;;
-                *)
-                    sudo apt-get install "$app" -y
-                    ;;
-            esac
-        fi
-    done
 }
 
 # Function to generate a password list using crunch
@@ -323,20 +309,17 @@ identify_network_range() {
 
 # Function to perform a quick ARP scan and translate it to IP addresses
 arp_scan() {
-    local network_range adapter_sockets=()
-
-    title "Performing a quick ARP scan..."
+        title "Performing a quick ARP scan..."
 
     network_range="${1//\n/}"
-    IFS=" " read -ra adapter_sockets <<< "$network_range"
-    
+        
     local adapter element arp_res 
-    for element in "${adapter_sockets[@]}"; do
+    while IFS= read -r element; do
         adapter=$(echo "$element" | cut -d ':' -f 1)
         note "Scanning $adapter"
         arp_res=$(arp-scan --localnet -I "$adapter" 2>/dev/null | awk 'NR>2 {print $1}' | head -n -3) 
         targets+="$arp_res\n"
-    done
+    done <<< "$network_range"
     targets=$(echo -e "$targets" | awk '$NF' | sort -u)
 
     echo
@@ -349,8 +332,9 @@ enumerate_targets() {
 
     title "Enumerating live hosts..."
     while IFS= read -r target; do
+        use_user_privileges touch "${enums_file_prefix}${target}" || continue
         enum4linux -a "$target" > "${enums_file_prefix}${target}"
-        #TODO add -p and -u
+        #TODO add result to -p and -u
         echo >> "${enums_file_prefix}${target}"
     done <<< "$targets"
     echo
@@ -379,6 +363,7 @@ scan_live_hosts() {
 
         #TODO add a spoofed ip using --spoof-mac --spoof-ip --spoof-port
         nmap -Pn -n -p- -T4 -oG "${result_grepable}" ${targets_str} &>/dev/null # -oX "xml.txt"
+        use_user_privileges touch "${sockets_file}" || return 1
         awk '/Ports/ {for (i = 5; i <= NF; i++) sub("[a-z]*(/){2}", "", $i) sub("/open", "", $i); print}' "${result_grepable}" \
         | sed 's|///||g; s/Ignored.*//; s/Host: //; s/() Ports: //' > "${sockets_file}"
     fi
@@ -391,6 +376,7 @@ nmap_xml_to_html() {
     local file_html
     while IFS= read -r file_xml; do
         file_html="${file_xml:0:(${#file_xml}-4)}.html"
+        use_user_privileges touch "${file_html}" || continue
         xsltproc "${file_xml}" > "${file_html}"
     done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.xml")
 }
@@ -407,40 +393,56 @@ service_version_scan() {
 		ports=$(cut -d ' ' -f 2- <<< "${line}" | sed -E 's!/[^,]*, !,!g ; s|/ $||' )
 
         note "scanning $ip"
-		nmap -n -Pn -T4 -sV -O --script "*vuln*" -p "${ports}" "${ip}" -oN "${nmap_sv_file_prefix}${ip}.txt" -oX "${nmap_sv_file_prefix}${ip}.xml" &>/dev/null
-        xsltproc "${nmap_sv_file_prefix}${ip}.xml" > "${nmap_sv_file_prefix}${ip}.html"
+        use_user_privileges touch "${nmap_sv_file_prefix}${ip}.txt" "${nmap_sv_file_prefix}${ip}.xml"
+		nmap -n -Pn -T4 -sV -O -p "${ports}" "${ip}" -oN "${nmap_sv_file_prefix}${ip}.txt" -oX "${nmap_sv_file_prefix}${ip}.xml" &>/dev/null
+        # xsltproc "${nmap_sv_file_prefix}${ip}.xml" > "${nmap_sv_file_prefix}${ip}.html"
 	done < "${sockets_file}"
     echo
 
     nmap_xml_to_html
 }
 
+service_vuln_scan() {
+    title "perform service vuln scan using Nmap..."
+    local ip
+    while IFS= read -r base_file; do
+        ip=$(grep -Eo "${IP_PATTERN}" <<< "${base_file}")
+        
+        use_user_privileges touch "${nmap_sv_vuln_file_prefix}${ip}.txt"
+        nmap --script "*vuln*" --script-args="inputfile=${base_file}" $ip -oN "${nmap_sv_vuln_file_prefix}${ip}.txt"
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.xml")
+
+    echo
+}
+
 # Function to check for known CVEs based on the service scan
 get_cve_payloads() {
     title "Checking for possible CVE"
-    local file_prefix found_cve cve_payloads cve_sum cve_hosts payload_sum payload_hosts 
+    local ip found_cve cve_payloads cve_sum cve_hosts payload_sum payload_hosts 
 
-    while IFS= read -r -d '' file
+    while IFS= read -r file
     do
-        file_prefix=$(grep -Eo "${IP_PATTERN}" <<< "${file}")
+        ip=$(grep -Eo "${IP_PATTERN}" <<< "${file}")
 
         found_cve=$(awk '{print $2}' "${file}" | grep -o "CVE.*" | sort -u)
         if [ "${found_cve}" != "" ]; then
-            echo "${found_cve}" > "${file_prefix}_CVE.txt"
+            use_user_privileges touch "${cve_file_prefix}${ip}" || continue
+            echo "${found_cve}" > "${cve_file_prefix}${ip}"
             ((cve_sum += $(wc -l <<< "${found_cve}")))
             ((cve_hosts += 1))
 
             cve_payloads=$(echo "${found_cve}" | xargs -I{} searchsploit {} | grep -v "No Results")
-            if [ "$cve_payloads" != "" ]; then
-                echo "${cve_payloads}" > "${file_prefix}_CVE_payloads.txt"
+            if [ -n "$cve_payloads" ]; then
+                use_user_privileges touch "${payloads_cve_file_prefix}${ip}" || continue
+                echo "${cve_payloads}" > "${payloads_cve_file_prefix}${ip}"
                 ((payload_sum += $(wc -l <<< "${cve_payloads}")))
                 ((payload_hosts += 1))
             fi
         fi
 
         #TODO download https://vulners.com/seebug exploits from the ${file}
-        # cat ${nmap_sv_file_prefix}10.0.0.66.xml | grep "service name.*version[^ ]*" -o
-    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.txt")
+        # cat ${nmap_sv_vuln_file_prefix}10.0.0.66.xml | grep "service name.*version[^ ]*" -o
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_vuln_file_prefix}*.txt")
 
     [[ ${cve_sum} =~ ${IS_NUM} ]] && note "found ${cve_sum} CVEs in ${cve_hosts} targets"
     [[ ${payload_sum} =~ ${IS_NUM} ]] && note "searchsploit found ${payload_sum} payloads for ${payload_hosts} targets"
@@ -449,40 +451,21 @@ get_cve_payloads() {
 }
 
 get_service_payloads() {
-    title "Checking for searchploit payloads for services"
-    local file_prefix payloads_file found_services found_payloads payload_sum payload_hosts 
-
-    while IFS= read -r -d '' file
+    title "Checking for searchsploit payloads for services"
+    local payloads_file payload_hosts 
+    
+    while IFS= read -r file
     do
-        file_prefix=$(grep -Eo "${IP_PATTERN}" <<< "${file}")
-        payloads_file="${file_prefix}_payloads.txt"
-        echo > "${payloads_file}"
+        ip=$(grep -Eo "${IP_PATTERN}" <<< "${file}")
+        payloads_file="${payloads_sv_file_prefix}${ip}"
 
-        found_services=$(grep -E "^[0-9]+/" "${file}" | awk '{ for (i = 4; i <= NF; i++) printf $i " "; print "" }' | awk 'NF' | sort -uV)
-        
-        while IFS= read -r service; do 
-            res=""
-            while [ -z "$res" ] && [ -n "$service" ] ; do
-                res=$(searchsploit "$service" 2>/dev/null | grep -v "No Results" 2>/dev/null)
-                service="$(awk '{ for (i = 1; i < NF; i++) printf $i " "; print "" }' <<< "${service}")"
+        use_user_privileges touch "${payloads_file}" || continue
+        searchsploit --nmap "${file}" > "${payloads_file}" 2>&1
 
-                #TODO check is service was alredy used (even after sort-u differbt services may have a same prefix)
-                # temp fix: cat payloads_file | sort -u 
-            done
-            [ -z "$res" ] && continue
-
-            echo "$res" >> "${payloads_file}"
-        done <<< "$found_services"
-
-        found_payloads=$(sort -u "${payloads_file}")
-        [ -z "${found_payloads}" ] && continue
-
-        echo "${found_payloads}" > "${payloads_file}"
-        ((payload_sum += $(wc -l <<< "${found_payloads}")))
         ((payload_hosts += 1))
-    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}*.txt")
+    done < <(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_vuln_file_prefix}*.xml")
 
-    [[ ${payload_sum} =~ ${IS_NUM} ]] && note "searchsploit found ${payload_sum} payloads for ${payload_hosts} targets"
+    [[ ${payload_hosts} =~ ${IS_NUM} ]] && success "searchsploit found payloads for ${payload_hosts} targets"
     echo
 }
 
@@ -531,13 +514,14 @@ brute_force_passwords() {
 
 # Function to display general statistics
 display_statistics() {
-    local delta_secs total_time report_files
+    local delta_secs min sec report_files
     delta_secs="$1"
-    total_time=$(echo "scale=2; ${delta_secs}/60" | bc)
+    min=$(echo "scale=0; ${delta_secs}/60" | bc)
+    sec=$(printf "%02d" $(echo "scale=0; ${delta_secs}%60" | bc))
     report_files=$(find "${SCAN_PATH}" -type f -wholename "${report_file_prefix}*" | wc -l)
 
     success "Scan completed at: $(date)"
-    success "Total time (min): $total_time"
+    success "Total time: ${min}:${sec}"
     success "Number of created report files: $report_files"
 }
 
@@ -547,40 +531,51 @@ save_report() {
 
     local targets="$1"
     while IFS= read -r target; do
-        local report_file services hydra enum 
+        local report_file services vuln cve hydra enum payload_cve payload_service
         report_file="${report_file_prefix}${target}"
         use_user_privileges touch "${report_file}" || continue
+        title "Report for ${target}:\n" > "${report_file}"
 
         services=$(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_file_prefix}${target}.txt" | head -n 1)
+        vuln=$(find "${SCAN_PATH}" -type f -wholename "${nmap_sv_vuln_file_prefix}${target}.txt" | head -n 1)
+        cve=$(find "${SCAN_PATH}" -type f -wholename "${cve_file_prefix}${target}" | head -n 1)
         hydra=$(find "${SCAN_PATH}" -type f -wholename "${hydra_file_prefix}${target}*" | head -n 1)
         enum="${enums_file_prefix}${target}"
+        payload_cve="${payloads_cve_file_prefix}${target}"
+        payload_service="${payloads_sv_file_prefix}${target}"
 
-        [ -s "${services}" ] && ( title "nmap results:"; cat "${services}"; echo ) >> "${report_file}" 
-        [ -s "${hydra}" ] && ( title "hydra results:"; grep -w login "${hydra}" | tail -n 1; echo ) >> "${report_file}" 
-        [ -s "${enum}" ] && title "for enumeration results look in: ${enum}" >> "${report_file}"
+        [ -s "${services}" ] && ( note "nmap results:"; cat "${services}"; echo ) >> "${report_file}"
+        [ -s "${cve}" ] && ( note "CVEs:"; cat "${cve}"; echo ) >> "${report_file}" 
+        [ -s "${hydra}" ] && ( note "hydra results:"; grep -w login "${hydra}" | tail -n 1; echo ) >> "${report_file}" 
+        [ -s "${vuln}" ] && note "for nmap vuln results look in: ${vuln}" >> "${report_file}" 
+        [ -s "${enum}" ] && note "for enumeration results look in: ${enum}" >> "${report_file}"
+        [ -s "${payload_cve}" ] && note "for CVE payload results look in: ${payload_cve}" >> "${report_file}"
+        [ -s "${payload_service}" ] && note "for service payload results look in: ${payload_service}" >> "${report_file}"
     done <<< "${targets}"
     echo
 }
 
 # TODO capture output from with_loading_animation
-function with_loading_animation() {
+with_loading_animation() {
     local padding msg
     padding="    "
     msg="$1"
     shift
 
-    # echo -ne "${GREEN}[+] ${CYAN}"
-    cycle_word_and_chars "${TITLE_PREFIX} ${TITLE_MSG}$msg${NC}" &
+    # cycle_word_and_chars "${TITLE_PREFIX} ${TITLE_MSG}${msg}${NC}" &
+    cycle_title "${msg}" &
 
     # title "$msg" | cycle_word_and_chars &
 
     local loading_msg_pid=$!
 
 	"$@" &>/dev/null  # Suppress the command's output
-    sleep 10
+    local -i func_return=$?
+    
     kill $loading_msg_pid
-    echo -ne "\r" #${GREEN}[+] ${CYAN}"
-    title "${msg}${padding}"
+    echo -ne "\r"
+    title "${msg}${padding}\n"
+    return $func_return
 }
 
 # Main function
@@ -591,7 +586,7 @@ main() {
 
     init_checks "$@" || exit 1
     install_programs "${apps[@]}" || exit 1
-    update_db || exit 1
+    with_loading_animation "updating vulnerability database" update_db || exit 1
     
     start_time=$(date +%s)
 
@@ -603,7 +598,8 @@ main() {
     run_in_background enumerate_targets "$targets"
     
     with_loading_animation "Scanning for open ports... " scan_live_hosts "$targets"
-	with_loading_animation "Scanning for service version and vulnerability..." service_version_scan
+	with_loading_animation "Scanning services for versions and vulnerabilities..." service_version_scan
+    with_loading_animation "Running vuln scripts on services..." service_vuln_scan
 
     # Weaponization
     run_in_background get_cve_payloads
