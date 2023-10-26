@@ -1,20 +1,18 @@
 #!/bin/bash
 
-# set -x
-
 ################################################################################
 #                                                                              #
-# vuln.sh									                                   #
+# vuln.sh                                                                      #
 #                                                                              #
 # version: 1.0.0                                                               #
 #                                                                              #
 # VULNER - Cyber units operating in an automated way.                          #
-#									                                           #
-# Student Name - Michael Ivlev						                           #
-# Student Code - S11						                                   #
+#                                                                              #
+# Student Name - Michael Ivlev                                                 #
+# Student Code - S11                                                           #
 # Class Code - HMagen773616                                                    #
-# Lectures Name - Eliran Berkovich					                           #
-#									                                           #
+# Lectures Name - Eliran Berkovich                                             #
+#                                                                              #
 # GNU GENERAL PUBLIC LICENSE                                                   #
 #                                                                              #
 # This program is free software: you can redistribute it and/or modify         #
@@ -32,7 +30,7 @@
 #                                                                              #
 ################################################################################
 
-# Import utils script
+# IMPORTS
 declare -g SCRIPT_DIR
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 declare -g USER_DIR
@@ -41,19 +39,14 @@ readonly SCRIPT_DIR USER_DIR
 source "${SCRIPT_DIR}/utils.sh"
 source "${SCRIPT_DIR}/vuln_config"
 
-set_default_style "${default_style}"
-# get_default_style
-
 # FILES
 # declare -rg LOG_PATH="/var/log/vuln.log" #TODO use it
-declare -rg SCAN_PATH="${USER_DIR}/vuln_scans" #_$(date +%s)"
-# declare -rg TEMP_PATH="${USER_DIR}/temp"
-# declare -rg rhosts_file="${SCAN_PATH}/rhosts.txt"
+declare -rg SCAN_PATH="${USER_DIR}/scans" #_$(date +%s)"
 declare -rg sockets_file="${SCAN_PATH}/open_sockets.txt"
 declare -rg DEFAULT_USR_LST="/usr/share/wordlists/metasploit/ipmi_users.txt"
 declare -rg DEFAULT_PAS_LST="/usr/share/wordlists/metasploit/default_pass_for_services_unhash.txt"
 
-# PATTERNS
+# FILE PATTERNS
 declare -rg report_file_prefix="${SCAN_PATH}/report_"
 declare -rg nmap_sv_file_prefix="${SCAN_PATH}/nmap_service_version_scan_"
 declare -rg nmap_sv_vuln_file_prefix="${SCAN_PATH}/nmap_service_vuln_scan_"
@@ -63,21 +56,17 @@ declare -rg payloads_sv_file_prefix="${SCAN_PATH}/service_payloads_"
 declare -rg enums_file_prefix="${SCAN_PATH}/enum_"
 declare -rg hydra_file_prefix="${SCAN_PATH}/hydra_"
 
+# GREP PATTERNS
+declare -rg IP_PATTERN="((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
+declare -rg IS_NUM="^[0-9]+$"
 
 # VARS
 declare -rg USERNAME="${SUDO_USER:-$USER}"
-
-
-
-declare -g adapter="eth1" #TODO remove after debug
-
-
-
 declare -g user_list="${DEFAULT_USR_LST}"
 declare -g pass_list="${DEFAULT_PAS_LST}"
 
-declare -rg IP_PATTERN="((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
-declare -rg IS_NUM="^[0-9]+$"
+# AUTORUN
+set_default_style "${default_style}"
 
 
 use_user_privileges() {
@@ -155,10 +144,10 @@ parse_arguments() {
 parse_adapter() {
     local pattern
     pattern="^(all|gateway)$|^(eth|wlan)[0-9]+$"
-namespaces="^(all|gateway)$"
+    namespaces="^(all|gateway)$"
     
     { [[ $1 =~ $pattern ]] && adapter="$1"; } || { usage; exit 1; }
-[[ $1 =~ $namespaces ]] && return 0
+    [[ $1 =~ $namespaces ]] && return 0
     
     for valid_adapter in $(get_valid_adapters)
     do
@@ -240,7 +229,7 @@ display_findings() {
     
     check_readable "${report_file}" || exit 1
     cat "${report_file}"
-    check_readable "${report_site}" && open "${report_site}"
+    "${display_html}" && check_readable "${report_site}" && open "${report_site}"
 }
 
 update_db() {
@@ -403,7 +392,7 @@ service_version_scan() {
 	done < "${sockets_file}"
     echo
 
-    nmap_xml_to_html
+    "${create_html}" && nmap_xml_to_html
 }
 
 service_vuln_scan() {

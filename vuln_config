@@ -1,6 +1,15 @@
 # to set a setting uncomment the line
 
+## choose a default color theme
 # default echo style
 # default_style=full
 # default_style=prefix
 # default_style=none
+
+## behavior of report function
+## open a report scan html version
+display_html=true
+# display_html=false
+## create a report scan html version
+create_html=true
+# create_html=false
