@@ -12,22 +12,36 @@ This tool run LAN Reconnaissance and runs a simple Weaponization phase to check 
 This tool is for educational purpose only, usage for attacking targets without prior mutual consent is illegal.
 Developers assume no liability and are not responsible for any misuse or damage cause by this program.
 
-## Features !
+## Features
 - Fully Automating host discovery.
 - Port Service Scanning using Nmap.
 - Using Different DataBases for common CVEs.
 - Automatically attempts to connect to found targets.
 - Generate report in a text and web format.
 
-# Installation
+# Installation 
 Instructions on how to install *VULNER*
 ```bash
 git clone https://github.com/MtheEPIC/VULNER.git
-```
-### Execution 
-```bash
 cd VULNER
-chmod +x vuln.sh && ./vuln.sh
+chmod u+x installer.sh 
+sudo ./installer.sh
+```
+Instructions on how to check if the install was successful
+```bash 
+sudo ./installer.sh -q
+```
+
+# Execution 
+Default scanning mode
+```bash
+chmod u+x vuln.sh 
+sudo ./vuln.sh
+```
+Report Mode 
+```bash
+chmod u+x vuln.sh 
+sudo ./vuln.sh -r IP
 ```
 
 ## Tools Overview
