@@ -1,52 +1,16 @@
 #!/bin/bash
 
-#declare -rg 
-# LOG_PATH="/var/log/"
 declare -rg DEFAULT_MSG="loading..."
 
 declare -rg utils_dir="$(dirname $(readlink -f "$0"))"
-source "${utils_dir}/color.sh"
+source "${utils_dir}/styled_prints.sh"
 
-# Function to print the message with a specific style: succalertess
+
+# Function to handle an error message and a quiting function
 # Parameters:
-#	message to print
-alert() {
-	local msg
-	msg="$1"
-
-	echo -e "${ALERT_PREFIX} ${ALERT_MSG}${msg}${NC}"
-}
-
-# Function to print the message with a specific style: title
-# Parameters:
-#	message to print
-title() {
-	local msg
-	msg="$1"
-
-	echo -e "${TITLE_PREFIX} ${TITLE_MSG}${msg}${NC}"
-}
-
-# Function to print the message with a specific style: note
-# Parameters:
-#	message to print
-note() {
-	local msg
-	msg="$1"
-
-	echo -e "${NOTE_PREFIX} ${NOTE_MSG}${msg}${NC}"
-}
-
-# Function to print the message with a specific style: success
-# Parameters:
-#	message to print
-success() {
-	local msg
-	msg="$1"
-
-	echo -e "${SUCCESS_PREFIX} ${SUCCESS_MSG}${msg}${NC}"
-}
-
+#	$1: error message
+#	$2: optional quiting function
+#	$*: optional quiting function arguments
 fail() {
 	[ $# -eq 0 ] && fail "Invalid use of \"fail\" function"
 	[ $# -eq 1 ] && alert "$1" && exit 1
@@ -57,12 +21,11 @@ fail() {
 	[ -z "$(declare -F "${rm_func}")" ] && fail "The passed function ($rm_func) isn't a valid function"
 
 	alert "$msg" && $rm_func "$@" && exit 1
-
 }
 
 # Function to check if a given file is a readable file
 # Parameters:
-#	file to check check
+#	$1: file to check check
 check_readable() {
 	local filename
 	{ [ $# -eq 1 ] && filename="$1"; } || { alert "wrong use of check_readable"; return 1; }
@@ -87,7 +50,7 @@ check_readable() {
 
 # Function to cycle through a pattern and make a wave with a given word
 # Parameters:
-#	word to make a wave to it
+#	$1: word to make a wave to it
 cycle_word_and_chars() {
 	local user_input=$1
 	local -r user_input=${user_input,,}
@@ -145,7 +108,9 @@ cycle_word_and_chars() {
 	# stty icanon
 }
 
-
+# Function wrapper to add a style to the cycling function
+# Parameters:
+#	$1: word to make a wave to it
 cycle_title() {
 	local user_input=$1
 	cycle_word_and_chars "${TITLE_PREFIX} ${TITLE_MSG}${user_input}${NC}"
@@ -153,7 +118,7 @@ cycle_title() {
 
 # Function to make a wave with a given word
 # Parameters:
-#	word to make a wave to it
+#	$1: word to make a wave to it
 cycle_word() {
 	local user_input=${1,,}
 	local word="${user_input:-$DEFAULT_MSG}"
@@ -263,6 +228,12 @@ install_program (){
 	return 0
 }
 
+# Function to handle the installation of apps
+# Parameters:
+#	$@: An array with the app names
+# Return:
+#	0 if all apps have been installed
+#	1 if encountered errors while installing
 install_programs() {
 	local program programs
 	local -i errors
@@ -282,9 +253,6 @@ install_programs() {
 	return $([ "$errors" -eq 0 ])
 }
 
-#######
-
-
 # Function to request the user to input the remote server credentials
 # Note:
 #	the password field is hidden in order to protect the user from over the sholder attacks
@@ -302,6 +270,10 @@ ssh_wrapper() {
 	sshpass -p "${rm_pass}" ssh -o StrictHostKeyChecking=no "${rm_user}@${rm_ip}" "$@" 
 }
 
+### THREADS ###
+# Function to add a func to the stack
+# Parameters:
+#	$@: A function with its arguments
 run_in_background() {
 	local std_file
 	std_file=$(mktemp)
@@ -309,6 +281,10 @@ run_in_background() {
 	"$@" > "$std_file" & add_to_background $! "$std_file"
 }
 
+# Function to handle the saving of the background PID and STDOUT
+# Parameters:
+#	$1: background function PID
+#	$2: background function redirected STDOUT path
 add_to_background() {
 	local new_pid temp_file
 
@@ -320,6 +296,9 @@ add_to_background() {
 	pid_list+="${new_pid}-${temp_file}"
 }
 
+# Function to handle the waiting and cleaning of the stack funcs
+# Return:
+#	error messages per encountered errors
 wait_for_all_background() {
 	for pid_file in ${pid_list}; do
 		local pid file
@@ -337,4 +316,3 @@ wait_for_all_background() {
 		rm "$file"
 	done
 }
-

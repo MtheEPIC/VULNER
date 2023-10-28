@@ -14,7 +14,8 @@ NC="\e[\033[0m"
 NBC="\e[\033[49m"
 GR="\e[\033[1;32;41m"
 
-# Themes
+### THEMES ###
+
 full() {
     ALERT_PREFIX="${RED}[!]"
     ALERT_MSG=$RED
@@ -56,6 +57,49 @@ none() {
     SUCCESS_PREFIX="${NC}"
     SUCCESS_MSG=""
 }
+
+### PRINTS ###
+# Function to print the message with a specific style: succalertess
+# Parameters:
+#	message to print
+alert() {
+	local msg
+	msg="$1"
+
+	echo -e "${ALERT_PREFIX} ${ALERT_MSG}${msg}${NC}"
+}
+
+# Function to print the message with a specific style: title
+# Parameters:
+#	message to print
+title() {
+	local msg
+	msg="$1"
+
+	echo -e "${TITLE_PREFIX} ${TITLE_MSG}${msg}${NC}"
+}
+
+# Function to print the message with a specific style: note
+# Parameters:
+#	message to print
+note() {
+	local msg
+	msg="$1"
+
+	echo -e "${NOTE_PREFIX} ${NOTE_MSG}${msg}${NC}"
+}
+
+# Function to print the message with a specific style: success
+# Parameters:
+#	message to print
+success() {
+	local msg
+	msg="$1"
+
+	echo -e "${SUCCESS_PREFIX} ${SUCCESS_MSG}${msg}${NC}"
+}
+
+### HANDLERS ###
 
 set_default_style() {
     case $1 in
